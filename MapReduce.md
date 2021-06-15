@@ -4,7 +4,6 @@
 <center>Google, Inc.</center> 
 
 
-
 <center>Abstract</center>
 MapReduce是一种编程模型，是用于处理和生成大数据集的相关实现。用户自定义map函数来处理key/value对，并生成中间key/value的集合。用户自定义reduce函数来合并所有中间key相同的value。
 
@@ -102,3 +101,16 @@ combiner function和reduce function的唯一区别是MapReduce库如何处理fun
 
 在调用用户Map或Reduce操作时，MapReduce库会将参数的序号存储在全局变量中，如果用户代码产生信号，signal handler会发送一个带有序号的包给MapReduce master。当master看到超过一次的特殊record，就应该跳过该record。
 
+##  5 Performance 
+
+###  5.3 Sort 
+
+因为我们的局部优化输入速率比混洗和输出速率快，大多数数据是从本地磁盘读取的，绕过了相对带宽受限的网络。 混洗速率比输出速率快因为输出阶段要写两份拷贝（GFS）。我们写两份拷贝是因为GFS的可靠性和可用性机制。
+
+##  8 Conclusions 
+
+我们从MapReduce中学到了一些东西。
+
+1. 限制编程模型使得并行和分布式计算变得简单，也让计算得到容错。
+2. 网络带宽是一种稀缺的资源。我们系统中做的很多优化都是为了减少网络中传递的数据量：本地优化让我们始终可以从本地磁盘中读取数据，并且将一份中间数据写到本次磁盘可以节约网络带宽。
+3. 冗余的执行可以用于减少慢机器带来的影响，并且可以处理机器故障和数据丢失。
