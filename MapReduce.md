@@ -3,6 +3,7 @@
 <center>jeff@google.com, sanjay@google.com</center>
 <center>Google, Inc.</center> 
 
+原文地址：https://pdos.csail.mit.edu/6.824/papers/mapreduce.pdf
 
 <center>Abstract</center>
 MapReduce是一种编程模型，是用于处理和生成大数据集的相关实现。用户自定义map函数来处理key/value对，并生成中间key/value的集合。用户自定义reduce函数来合并所有中间key相同的value。

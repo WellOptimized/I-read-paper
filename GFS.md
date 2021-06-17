@@ -4,6 +4,8 @@ Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung
 
 Google∗ 
 
+原文地址：https://pdos.csail.mit.edu/6.824/papers/gfs.pdf
+
 注：文本中的块=chunk。
 
 ## ABSTRACT
@@ -104,7 +106,21 @@ defined是consistent的子集。
 
 一个文件区域是consistent当所有客户端不管读到哪个replicas都能看到相同的数据。一个区域是defined的，当发生file data mutation后如果它还是consistent的并且所有客户端都能完整看见mutation。当mutation没有被并发的writers干扰，成功执行时，受影响的区域就是defined（同时也是consistent）。并发成功mutations保持区域undefined但是consistent：所有的客户端会看到相同的数据，但是不会反映出写了哪个mutation。通常相同的数据由来自多个mutations的混合片段组成。一个失败的mutation使得区域inconsistent（因此也是undefined）：不同的客户端可能在不同的时间点看到不同的数据。
 
+在一连串的成功mutations之后，被修改的文件区域被保证是defined，并且包含最后一次mutation写的数据。GFS通过如下方法实现这个：
 
+* 将mutations以相同的顺序应用到所有副本上去。
+
+*  使用chunk version numbers来检测是任何一个replica是否因为它的chunkserver关闭了导致错过了mutations。
+
+GFS通过master和所有chunkservers之间的常规handshakes和通过检验和检测数据损坏来识别出错的chunkservers。当问题出现时，数据会尽快从合法的副本中读出。当chunk的所有副本在GFS能反应前（通常需要几分钟）丢失，chunk就不可逆的丢失了。即使是在这种情况下，数据也是不可用，而不是损坏：应用程序会收到明确的错误，而不是损坏的数据。
+
+#### 2.7.2 Implications for Applications
+
+* append rather than overwrites
+* checkpoint
+* writing self-validating, self-identifying records. 
+
+？？？
 
 ## 3. SYSTEM INTERACTIONS 
 
@@ -112,38 +128,140 @@ defined是consistent的子集。
 
 ### 3.1 Leases and Mutation Order 
 
+一次mutation是改变chunk内容或者元数据的操作，每一次mutation都要在所有该chunk的副本上执行。我们使用lease来维护不同replica的一致性mutation。master授予其中一个replica（称作primary）lease。primary为这些mutations选择一个连续顺序。所有replicas在应用mutations时都要遵循这个顺序。lease的初始超时时间是60s。master可以撤销在lease失效之前revoke（当master不想在一个正在改名的文件上应用mutations时）。当master丢失和primary的通信时，可以在旧的lease失效后给与另一个replica新的lease。
+
+如果write很大或者跨越了chunk边界，GFS客户端会将write分解成许多write操作。他们都遵循control flow但是可能会和其他客户端的并发操作交织并覆盖。因此，共享文件区域可能包含不同客户端的段，尽管replicas是相同的因为所有单个操作都以相同的顺序在所有replicas上执行。这使得file region处于consistent、undefined的状态。
+
 ![1623810321608](../image/1623810321608.png)
 
 ### 3.2 Data Flow 
 
+我们的目标是充分利用每一台机器的网络带宽，避免网络瓶颈和高延迟。
+
+数据沿chunservers的链路线性推送，而不是通过其它拓扑进行分布式推送。
+
+最后通过在TCP连接上流水线传递数据来减少延迟。一旦chunkserver接收一些数据，它立刻开始转发。
+
 ### 3.3 Atomic Record Appends 
+
+这个record指的就是chunk中的data，而不是operation log。
+
+record append是GFS提供的一种原子追加操作。record append遵循control flow，只在primary处有一些额外的逻辑。primary追加数据到自己的chunk中，告诉secondaries明确的offset去写数据，然后最终primary回复success到客户端。
+
+？？？
+
+### 3.4 Snapshot
+
+快照是拷贝文件或者目录树，并且尽量不中断正在进行的mutations。 
+
+使用COW来实现快照。当master收到一个快照请求时，它首先会revoke任何一个即将快照的文件中的chunk的leases。这可以保证任何后续的write操作必须和master交互来找到lease持有者。这给了master创建chunk副本的机会。
+
+在lease被revoked或者失效以后，master将操作记录到磁盘。然后通过复制源文件或者目录树的元数据将log record应用到内存状态。新创建的快照文件指向和源文件相同的chunks。
+
+当快照操作后第一次有一个客户端想要write chunk C。客户端发送请求到master发现当前的lease holder。master注意到chunkC的应用超过了1。master就延迟对客户端请求的回答，转而挑选新的chunk handlerC'。然后master询问每一个拥有chunkC副本的chunkserver创建一个新的chunk C'。通过在相同chunkservers上创建新的chunk，我们保证数据在本地拷贝，而不是通过网络。从这点出发，请求的处理就完全一样了：master给chunkC'副本的其中一个lease，并且回复客户端现在可以正常write chunk，客户端不必知道已经拷贝了一个新的chunk。
 
 ## 4. MASTER OPERATION
 
 ### 4.1 Namespace Management and Locking
 
-read、write lock
+没有目录数据结构来列出里面所有的文件。也没有文件别名（像Unix里的软硬链接）。
+
+文件名和绝对目录名都有read-write lock。
+
+文件创建不需要获取父目录的write lock是因为根本没有“directory”或者“inode”的数据结构来保护不被修改。对于父目录名字的read lock已经足够保护不受删除。
 
 ### 4.2 Replica Placement
 
-machine rack
+chunk replica placement策略主要有两个目标：最大化数据可靠性和可用性，最大化网络带宽的使用。仅仅在机器之间传播replica是不够的的，我们必须across racks传播chunk replicas，这样即便整个rack毁坏了也有chunk replica存活。
 
 ### 4.3 Creation, Re-replication, Rebalancing  
 
-### 4.4 Garbage Collection 
+creation
+
+放置初始化的空replicas时，需要考虑几个因素：
+
+* 磁盘空间利用率低于平均值的chunkservers。
+* 限制每一个chunkserver上的“recent”创建次数。
+* 跨越不同的racks。
+
+re-replication
+
+根据几个因素确定re-replication的优先级。
+
+rebalancing  
+
+相较于立即使用heavy write traffic填满new chunks，rebalancing逐渐的填满chunserver是一种更好的行为。
+
+### 4.4 Garbage Collection
+
+文件被删除后，GFS采用惰性垃圾回收。
+
+#### 4.4.1 Mechanism
+
+文件被删除时，master会写opration log。然而并不立刻回收志愿，而是将文件重命名成一个隐藏的名字，并且包含删除时间戳。当master进行常规扫描时，会移除超过3天的隐藏文件（这个时间间隔可以设置）。在那之前，文件可以以新名字被read，也可以通过命名回常规名字来undeleted。当隐藏文件从命名空间移除时，内存中的对应的元数据才会消除。
+
+常规扫描中，master会标识孤儿chunks并且擦除元数据。在master和每个chunkserver的HeartBeat信息中，chunkserver会报告有的chunks子集，master会回应没有元数据的chunks的标识。chunkserver就可以释放掉这些chunks。
+
+#### 4.4.2 Discussion
+
+提到了延迟垃圾回收的一些优点和缺点。当然用户可以在某些目录树下指定replication和gc的策略。
 
 ### 4.5 Stale Replica Detection  
 
- chunk version number  
+ 对于每一个chunk，master维护一个特chunk version number来区别up-to-date和stale replicas。
 
-## 5.FAULT TOLERANCE AND DIAGNOSIS 
+每当master授予一个新的lease给chunk时，它会增加chunk的version number并且通知up-to-date副本。master和这些up-to-date副本都会将new version number记录在持久化状态中。如果某一个replica不可用，那么它的chunk version number就不会增加。当拥有stale replica的chunserver重启并将chunks状态汇报给master时，master会检测是否有stale replica。如果master发现一个version number更大，那说明自己的那个出错了，更新自己的version number。
 
-### 5.1 High Availability 
+master在gc时移除stale replicas。在那之前，当回复客户端关于chunk信息的请求时，认为stale replicas不存在是一种高效的办法。client和master在做很多操作时会检查version number是否up-to-date，例如通知客户端哪个chunkserver持有某个chunk的lease，指挥一个chunkserver从另一个chunkserver上读取chunk。
 
-### 5.2 Data Integrity 
+## 5.FAULT TOLERANCE AND DIAGNOSIS
 
- checksums
+### 5.1 High Availability
 
-### 5.3 Diagnostic Tools 
+我们使用两个简单有效的策略保持整个系统高可用：fast recovery、replication。
 
-![1623824038345](../image/1623824038345.png)
+#### 5.1.1 Fast Recovery
+
+无论他们是怎么被终结的，master和chunkserver都被设计成在数秒内恢复状态并启动。
+
+#### 5.1.2 Chunk Replication
+
+虽然当前replication做的很好，但是我们也在探究使用其他形式的跨服务器冗余，像奇偶校验码或纠删码。
+
+#### 5.1.3 Master Replication
+
+master的状态也会被复制。它的operation log和checkpoints都会被复制到多台机器上。mutation只有在刷到本次磁盘和所有replicas后才会被认为是committed。如果master出错，GFS外的监控基础设施开启一个新的带有replicated operation log的master进程。客户端只使用master的标准名称，该标准名称是一个DNS别名，因此master可以被重定位到另一台机器上。
+
+当primary master关闭时，shadow masters只提供只读访问。它们是shadows，而不是mirrors，因为它们可能稍微落后于primary几分之一秒。事实上，因为文件内容是从chunkservers中读取的，应用程序不会观察到陈旧的文件内容。应用程序只会观察到陈旧的元数据。
+
+### 5.2 Data Integrity
+
+每一个chunkserver都是用校验和来检测数据的损坏。因为GFS mutations的语义，尤其是atomic record append，不能保证副本之间是完全相同的。因此每一个chunkserver必须通过检验和来检验自身拷贝的完整性。
+
+一个chunk是64KB大小，每一个chunk都有32bit的校验和。就像其它元数据，校验和被保存在内存中，并且通过logging持久化存储。
+
+检验和对于read来说几乎没有影响。校验码的查找和比较用不到I/O，因此校验和计算可以经常和I/O重叠。
+
+校验和针对write做了很多的优化，因为它们是我们工作负载的主要部分。当write是append时，我们只增量计算last partial checksum block以及全新的checksum block。即使last partial checksum block已经被损坏并且我们没能检测到它，在下一次读的时候也可以检测到损坏（因为那一个block的新checksum是用旧checksum加上新加入数据计算出来的）。
+
+![1623935100549](../image/1623935100549.png)
+
+如果write是重写一段已经存在的chunk时，我们必须检验第一和最后一个block，然后执行write，然后计算新的校验和。
+
+在空闲时期，chunkservers可以扫描检验不活跃chunks的校验和。
+
+### 5.3 Diagnostic Tools
+
+广泛而详细的诊断日志在问题隔离、调试和性能分析方面起到了不可估量的作用，同时只产生了最低限度的成本。
+
+## 6.MEASUREMENTS
+
+这一节我们展示了一些micro-benchmarks来阐明GFS架构和实现的瓶颈，同时也有一些数字来自Google正在使用的真实集群。
+
+###  6.1 Micro-benchmarks
+
+####  6.1.1 Reads
+
+####  6.1.2 Writes 
+
+![1623937614663](../image/1623937614663.png)
