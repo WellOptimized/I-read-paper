@@ -264,4 +264,66 @@ master的状态也会被复制。它的operation log和checkpoints都会被复�
 
 ####  6.1.2 Writes 
 
+#### 6.1.3 Record Appends
+
 ![1623937614663](./image/1623937614663.png)
+
+### 6.2 Real World Clusters
+
+![1623983231956](./image/1623983231956.png)
+
+#### 6.2.1 Storage  
+
+#### 6.2.2 Metadata
+
+chunkserver上保存的唯一的元数据是chunk version number。
+
+master上保存的元数据更小。因此我们之前假设在实践中，master内存的大小不会限制系统的容量。master上的元数据包括文件名、文件所有权和权限、从文件到chunks的映射、每一个chunk的当前version、当前replica位置和引用次数。
+
+chunkserver恢复很快只需要几秒钟，master要挣扎30-60s，直到从所有chunkservers取到chunk位置信息。
+
+#### 6.2.3 Read and Write Rates 
+
+![1623985131725](image/1623985131725.png)
+
+#### 6.2.4 Master Load 
+
+#### 6.2.5 Recovery Time 
+
+### 6.3 Workload Breakdown 
+
+#### 6.3.1 Methodology and Caveats 
+
+#### 6.3.2 Chunkserver Workload 
+
+![1623987246410](image/1623987246410.png)
+
+![1623987454872](image/1623987454872.png)
+
+#### 6.3.3 Appends versus Writes 
+
+我们的data mutation workload是appending占主导地位而不是overwriting，overwriting一般是出错或者超时导致的重试机制。
+
+#### 6.3.4 Master Workload  
+
+![1623987929970](image/1623987929970.png)
+
+## 7.EXPERIENCES  
+
+我们最大的问题之一就是磁盘和Linux driver相关。有的Linux版本可能导致磁盘出现损坏的数据。这个问题驱动我们使用校验码来检测数据损坏，同时我们修改了Linux内核代码来处理这些协议的不匹配。
+
+因为fsync()（同步写，同时刷数据和元数据到磁盘），我们在Linux2.2内核上有些问题，它的开销和文件大小成比例而不是和修改部分。在我们实现checkpointing之前，修改大的operation log就成了问题。我们通过同步写解决了这个问题，并最终迁移到Linux 2.4。
+
+另外一个Linux问题就是线程中的reader-write lock，当线程从磁盘中读取page（reader lock），或者调用mmap修改地址空间（writer lock）。我们看到在系统处于轻负载，并且找不到资源瓶颈或者硬件错误的情况下会出现短暂的超时。最终，我们发现lock阻塞了primary网络线程去映射新数据到内存，因此磁盘线程实际上是在之前映射过的数据上分页。因为我们主要被网络接口所限制，而不是被内存拷贝带宽，所以我们通过将mmap（）替换成pread（）来解决额外拷贝的开销。
+
+## 8.RELATED WORK 
+
+## 9.CONCLUSIONS
+
+我们的系统通过持续监控、复制重要数据和又快又自动的recovery来容错。chunk replication让我们有chunkservers上的容错。我们还是用校验码来检测磁盘上的数据损坏。
+
+我们的设计在许多并发readers和writers执行不同的任务时提供高吞吐量。我们通过分离文件系统control和data来实现这个效果，control通过master，data直接在chunkservers和clients之间传输。 通过给与primary replicas权限来尽可能减少master在operations中的参与，因此简单而又中心化的master不会成为瓶颈。
+
+## ACKNOWLEDGMENTS
+
+## REFERENCES  
