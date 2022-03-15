@@ -469,3 +469,91 @@ DIRECT, STEAL,NOT-FORCE。但这样的方法需要做好redo和undo。
 logical log vs physical log vs physiology。
 
 ARIES论文中 physical log 用于 redo log，logical log用于undo log。
+
+* the log record describing the earliest change to the oldest dirty page in the buffer pool, and （对应于 smallest recLSN in DPT,redo ）
+
+* the log record representing the start of the oldest transaction in the system.（对应于 smallest lsn for uncommited tons, undo)
+
+log sequence number、checkpoints
+
+## 6.5 Locking and Logging in Indexes
+
+### 6.5.1 Latching in B+-Trees
+
+* Conservativeschemes：不冲突就可以同时访问同一个page/
+* Latch-coupling schemes：15445中所用的crabbing，grab child and release parent，不断重复。
+
+* Right-link schemes：pointer to right-hand neighbor（右兄弟节点）, high key （？[知乎上丁凯写的文章 ](https://zhuanlan.zhihu.com/p/372830975)我还是有疑问
+
+### 6.5.2 Logging for Physical Structures
+
+Compensation Log Record 是redo log，并且是redo only log。
+
+有一些特殊的操作，一旦执行成功就不能再 Undo。比如在一个事务中为某个 Table 分配了一个新的 Page，分配成功后可能会有一些其他的事务会更新这个 Page，如果分配 Page 的事务回滚（销毁这个 Page），那么其他事务的更新会丢失。那么就会在不能undo的record后面跟上一条dummy CLR record，dummy CLR record的undo next lsn会直接指向上上条（跳过上一条），这样即便后续事务回滚，这种操作也不会回滚。
+
+### 6.5.3 Next-Key Locking: Physical Surrogates for Logical Properties
+
+serializability。
+
+不能使用predicate lock，因为检查冲突太昂贵，需要比较和任意谓词是否有重叠关系。
+
+在 a [Bob,Bobbie] c 上加next-key lock，那么既不能在[Bob,Bobbie]中，也不能在[a,Bob],[Bobbie,c]中（大概是这样，至于什么左开右闭这里就不纠结了）。
+
+## 6.6 Interdependencies of Transactional Storage
+
+ concurrency control, recovery management, and access methods.
+
+* concurrency control and recovery ：WAL要求strict 2PL。
+
+* concurrency and access methods
+* recovery 、 access methods：
+
+buffer management独立于这三样东西。
+
+## 6.7 Standard Practice
+
+## 6.8 Discussion and Additional Material
+
+# 7. Shared Components
+
+## 7.1 Catalog Manager
+
+包含metadata。
+
+## 7.2 Memory Allocator
+
+context-based memory allocator.
+
+memory context是内存中的数据结构，维护了一个连续虚拟内存的区域的链表。
+
+* Create a context with a given name or type
+* Allocate a chunk of memory within a context
+* Delete a chunk of memory within a context
+* Delete a context
+* Reset a context
+
+### 7.2.1 A Note on Memory Allocation for Query Operators
+
+## 7.3 Disk Management Subsystems
+
+将数据库表映射到磁盘/文件。
+
+## 7.4 Replication Services
+
+* Physical Replication
+* Trigger-Based Replication
+* Log-Based Replication
+  * read log and build SQL statements to be replayed against the target system
+  * read log records and ship these to the target system
+
+只有第三种同时提供性能和拓展性。
+
+## 7.5 Administration, Monitoring, and Utilities
+
+* Optimizer Statistics Gathering
+* Physical Reorganization and Index Construction:需要注意重组的时候Logging、locking protocols
+* Backup/Export：为了性能，考虑fuzzy dump
+* Bulk Load
+* Monitoring, Tuning, and Resource Governers
+
+# 8 Conclusion
