@@ -6,5 +6,17 @@
 |            | [Chunbby](http://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf) |
 | 2022-03-07 | Access Path Selection in a Relational Database Management System |
 | 2022-03-08 | Granularity of Locks in a Shared Data Base                   |
-| 2022-03-14 | Architecture of a Database System                            |
+| 2022-03-15 | Architecture of a Database System                            |
+|            | ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
+|            |                                                              |
 

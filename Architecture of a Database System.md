@@ -459,7 +459,7 @@ Berenson又提出了ANSI SQL下的新问题。
 WAL：
 
 * 每一次对page的修改都要生成一条log record，log record flush要先于page flush
-* log record按顺序flush
+* log record 按LSN顺序 flush
 * commit log record flush 要先于commit reuqest返回
 
 尽量快的方法：
@@ -557,3 +557,4 @@ memory context是内存中的数据结构，维护了一个连续虚拟内存的
 * Monitoring, Tuning, and Resource Governers
 
 # 8 Conclusion
+
